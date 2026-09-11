@@ -425,9 +425,29 @@ class ThermoMavenAPI:
             _LOGGER.error("Error processing MQTT message: %s", err)
 
     def _on_mqtt_disconnect(self, client, userdata, rc):
-        """Handle MQTT disconnection."""
+        """Handle MQTT disconnection.
+
+        paho's background loop (started via loop_start()) auto-reconnects the
+        underlying MQTT session, but the client is created without
+        clean_session=False, so the broker drops all prior subscriptions on
+        reconnect. _on_mqtt_connect only re-subscribes to per-device status
+        topics when self._mqtt_device_list_received is False (it skips that
+        step once the initial list has been received, to avoid re-syncing on
+        every reconnect). Left unset, that meant: after any disconnect, the
+        connection would silently come back but device status topics were
+        never re-subscribed, so sensors would go stale until the integration
+        was reloaded. Resetting the flag here makes the next successful
+        on_connect run the full device-sync-and-resubscribe path again,
+        exactly like the manual `thermomaven.sync_devices` service does today.
+        """
         if rc != 0:
             _LOGGER.warning("Unexpected MQTT disconnection: %s", rc)
+            _LOGGER.debug(
+                "Resetting device list state so reconnect re-subscribes to "
+                "per-device topics"
+            )
+            self._mqtt_device_list_received = False
+            self._latest_mqtt_data = None
 
     async def _trigger_device_sync(self):
         """Trigger device synchronization by calling API endpoints.
